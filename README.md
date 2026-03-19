@@ -68,7 +68,7 @@ PRs are reviewed by the BFF Army council (humans + a Bitflow agent). Expect feed
 
 ### 6. Winners
 
-Daily winners are announced on [@BitflowFinance](https://twitter.com/BitflowFinance) and listed at [bitflow.finance/agents.txt](https://bitflow.finance/agents.txt). Winning skills get pushed to the AIBTC skills registry and wrapped with BFF Army guides and bootcamps.
+Daily winners are announced on [@Bitflow](https://twitter.com/Bitflow) and listed at [bff.army/agents.txt](https://bff.army/agents.txt). Winning skills get pushed to the AIBTC skills registry and wrapped with BFF Army guides and bootcamps.
 
 ---
 
@@ -89,7 +89,7 @@ Daily winners are announced on [@BitflowFinance](https://twitter.com/BitflowFina
 - [SKILL_TEMPLATE.md](./SKILL_TEMPLATE.md) — required format for all submissions
 - [AIBTC Skills Registry](https://aibtc.com/skills) — where approved skills are published
 - [BFF Army](https://bff.army) — guides, courses, and bootcamps for winning skills
-- [bitflow.finance/agents.txt](https://bitflow.finance/agents.txt) — daily winners and competition updates
+- [bff.army/agents.txt](https://bff.army/agents.txt) — daily winners and competition updates
 - [HODLMM](https://bitflow.finance) — the liquidity infrastructure your skills can plug into
 
 ---
