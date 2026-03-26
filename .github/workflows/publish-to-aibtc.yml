@@ -1,0 +1,201 @@
+name: Publish Winner to AIBTC Skills
+
+# Triggers when a PR with the 'winner-approved' label is merged to main
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  publish-to-aibtc:
+    # Only run if the PR was merged (not just closed) AND has the label
+    if: >
+      github.event.pull_request.merged == true &&
+      contains(github.event.pull_request.labels.*.name, 'winner-approved')
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout bff-skills
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Detect skill folder from PR
+        id: detect
+        run: |
+          # Get the list of files changed in this PR's merge commit
+          SKILL_DIR=$(git diff --name-only HEAD~1 HEAD | grep '^skills/' | head -1 | cut -d'/' -f2)
+
+          if [ -z "$SKILL_DIR" ]; then
+            echo "::error::No skill directory found in merged files"
+            exit 1
+          fi
+
+          echo "skill_name=$SKILL_DIR" >> "$GITHUB_OUTPUT"
+          echo "skill_path=skills/$SKILL_DIR" >> "$GITHUB_OUTPUT"
+          echo "Detected skill: $SKILL_DIR"
+
+      - name: Extract author from SKILL.md frontmatter
+        id: author
+        run: |
+          SKILL_PATH="${{ steps.detect.outputs.skill_path }}"
+
+          # Extract author from frontmatter (handles both flat and nested formats)
+          AUTHOR=$(grep -E '^\s*author:' "$SKILL_PATH/SKILL.md" | head -1 | sed 's/.*author:\s*//' | tr -d '"' | tr -d "'" | xargs)
+          AUTHOR_AGENT=$(grep -E '^\s*author.agent:' "$SKILL_PATH/SKILL.md" | head -1 | sed 's/.*author.agent:\s*//' | tr -d '"' | tr -d "'" | xargs)
+
+          # Fallback: try underscore variant (author_agent)
+          if [ -z "$AUTHOR_AGENT" ]; then
+            AUTHOR_AGENT=$(grep -E '^\s*author_agent:' "$SKILL_PATH/SKILL.md" | head -1 | sed 's/.*author_agent:\s*//' | tr -d '"' | tr -d "'" | xargs)
+          fi
+
+          echo "author=$AUTHOR" >> "$GITHUB_OUTPUT"
+          echo "author_agent=$AUTHOR_AGENT" >> "$GITHUB_OUTPUT"
+          echo "PR author (GitHub): ${{ github.event.pull_request.user.login }}"
+          echo "Skill author (frontmatter): $AUTHOR"
+          echo "Agent name: $AUTHOR_AGENT"
+
+      - name: Convert frontmatter to AIBTC format
+        run: |
+          SKILL_PATH="${{ steps.detect.outputs.skill_path }}"
+          node scripts/convert-frontmatter.js "$SKILL_PATH/SKILL.md"
+
+      - name: Fix command paths for aibtcdev repo
+        run: |
+          SKILL_NAME="${{ steps.detect.outputs.skill_name }}"
+          SKILL_PATH="${{ steps.detect.outputs.skill_path }}"
+
+          # In aibtcdev/skills, skills live at root level, not inside skills/
+          # Replace "skills/skill-name/" with "skill-name/" in command examples
+          sed -i "s|skills/$SKILL_NAME/|$SKILL_NAME/|g" "$SKILL_PATH/SKILL.md"
+          sed -i "s|skills/$SKILL_NAME/|$SKILL_NAME/|g" "$SKILL_PATH/AGENT.md" 2>/dev/null || true
+
+      - name: Add origin section to SKILL.md
+        run: |
+          SKILL_PATH="${{ steps.detect.outputs.skill_path }}"
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          PR_URL="${{ github.event.pull_request.html_url }}"
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          AUTHOR="${{ steps.author.outputs.author }}"
+
+          # Only add origin section if it doesn't already exist
+          if ! grep -q "## Origin" "$SKILL_PATH/SKILL.md"; then
+            cat >> "$SKILL_PATH/SKILL.md" << EOF
+
+## Origin
+
+Winner of AIBTC x Bitflow "Skills Pay the Bills" competition.
+Original author: @${AUTHOR}
+Competition PR: ${PR_URL}
+EOF
+          fi
+
+      - name: Fork and clone aibtcdev/skills
+        env:
+          GH_TOKEN: ${{ secrets.AIBTC_SKILLS_PAT }}
+        run: |
+          # Ensure the fork exists (no-op if already forked)
+          gh repo fork aibtcdev/skills --clone=false 2>/dev/null || true
+
+          # Get the fork owner (the account that owns the PAT)
+          FORK_OWNER=$(gh api user --jq '.login')
+          echo "fork_owner=$FORK_OWNER" >> "$GITHUB_ENV"
+          echo "Fork owner: $FORK_OWNER"
+
+          # Clone the fork
+          gh repo clone "${FORK_OWNER}/skills" aibtc-skills
+
+          # Add upstream for reference
+          cd aibtc-skills
+          git remote add upstream https://github.com/aibtcdev/skills.git
+          git fetch upstream main
+          git checkout -B main upstream/main
+
+      - name: Copy skill to aibtcdev/skills
+        run: |
+          SKILL_NAME="${{ steps.detect.outputs.skill_name }}"
+          SKILL_PATH="${{ steps.detect.outputs.skill_path }}"
+
+          # Copy skill folder to root level of aibtcdev/skills
+          mkdir -p "aibtc-skills/$SKILL_NAME"
+          cp -r "$SKILL_PATH"/* "aibtc-skills/$SKILL_NAME/"
+
+          echo "Copied $SKILL_PATH/* to aibtc-skills/$SKILL_NAME/"
+          ls -la "aibtc-skills/$SKILL_NAME/"
+
+      - name: Create PR to aibtcdev/skills via fork
+        env:
+          GH_TOKEN: ${{ secrets.AIBTC_SKILLS_PAT }}
+        run: |
+          SKILL_NAME="${{ steps.detect.outputs.skill_name }}"
+          AUTHOR="${{ steps.author.outputs.author }}"
+          AUTHOR_AGENT="${{ steps.author.outputs.author_agent }}"
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          PR_URL="${{ github.event.pull_request.html_url }}"
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          FORK_OWNER="${{ env.fork_owner }}"
+
+          cd aibtc-skills
+
+          BRANCH="bff-comp/${SKILL_NAME}"
+
+          # Bot is the committer (who pushed), original creator is the author (who wrote it)
+          # GitHub UI shows the author prominently — this is the name on the commit
+          git config user.name "BFF Skills Bot"
+          git config user.email "bff-skills-bot@bitflow.finance"
+
+          # Create branch
+          git checkout -b "$BRANCH"
+
+          # Stage and commit — --author makes the original creator the git author
+          # Git stores author and committer separately:
+          #   author  = the person who wrote the code (original creator)
+          #   committer = the person/bot who applied the commit (BFF Skills Bot)
+          git add "$SKILL_NAME/"
+          git commit \
+            --author="${AUTHOR} <${AUTHOR}@users.noreply.github.com>" \
+            -m "feat: add ${SKILL_NAME} skill (BFF Skills Comp winner)
+
+Submitted by @${AUTHOR}${AUTHOR_AGENT:+ (${AUTHOR_AGENT})} via the AIBTC x Bitflow Skills Pay the Bills competition.
+
+Competition PR: ${PR_URL}"
+
+          # Push to the fork (origin = fork, upstream = aibtcdev/skills)
+          git push origin "$BRANCH"
+
+          # Create cross-fork PR: from fork's branch → aibtcdev/skills main
+          gh pr create \
+            --repo aibtcdev/skills \
+            --base main \
+            --head "${FORK_OWNER}:${BRANCH}" \
+            --title "feat: add ${SKILL_NAME} (BFF Skills Comp winner by @${AUTHOR})" \
+            --body "## ${SKILL_NAME}
+
+**Author:** @${AUTHOR}${AUTHOR_AGENT:+ (${AUTHOR_AGENT})}
+**Competition PR:** ${PR_URL}
+**PR Title:** ${PR_TITLE}
+
+---
+
+This skill was submitted to the [AIBTC x Bitflow Skills Pay the Bills](https://bff.army/agents.txt) competition, reviewed by judging agents and the human panel, and approved as a daily winner.
+
+Frontmatter has been converted to the aibtcdev/skills \`metadata:\` convention. Command paths updated to match this repo's root-level skill layout.
+
+### Files
+- \`${SKILL_NAME}/SKILL.md\` — Skill definition with AIBTC-format frontmatter
+- \`${SKILL_NAME}/AGENT.md\` — Agent behavior rules and guardrails
+- \`${SKILL_NAME}/${SKILL_NAME}.ts\` — TypeScript implementation
+
+### Attribution
+Original author: **@${AUTHOR}**. The \`metadata.author\` field in SKILL.md preserves their attribution permanently.
+
+---
+_Automated by [BFF Skills Bot](https://github.com/BitflowFinance/bff-skills) on merge of PR #${PR_NUMBER}._"
+
+          echo "✅ PR created to aibtcdev/skills via fork (${FORK_OWNER}/skills)"
