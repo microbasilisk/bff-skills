@@ -14,11 +14,11 @@
 ## Guardrails
 
 - **Never supply more than `--max-supply-sats` (default 500,000) in a single call.** Split larger amounts across cycles.
-- **Never borrow without `--allow-borrow` flag.** Default behavior is supply-only. Borrowing creates liquidation risk.
+- **v1 is supply-only.** Borrowing is not implemented. Future versions may add borrow support with explicit opt-in and liquidation safeguards.
 - **Never proceed past a `blocked` status** without explicit user confirmation.
 - **Never expose secrets or private keys** in args or logs.
 - **Always check gas balance** before write operations. Minimum 100,000 uSTX recommended.
-- **Simulate before broadcast.** Use stxer dry-run endpoint to validate the transaction will succeed before paying gas.
+- **Pre-flight checks validate gas balance, sBTC balance, and spend limits** before generating the transaction payload. Transaction simulation is not yet implemented — broadcasting relies on these pre-checks plus Zest contract-level validation.
 - **Respect the reserve.** Agent should keep a liquid sBTC reserve for operational costs (messages, fees). Only supply the excess.
 
 ## Capital allocation strategy
@@ -47,7 +47,7 @@ Return structured JSON every time. No ambiguous success states.
 - If `insufficient_gas`: agent should acquire STX before retrying
 - If `pool_utilization_full`: withdrawal temporarily blocked — retry next cycle
 - If `oracle_unavailable`: Pyth outage — skip yield operations this cycle
-- If `simulation_failed`: transaction would revert — do NOT broadcast, log the error
+- If `spend_limit_exceeded`: amount exceeds max-supply-sats — reduce amount or override limit
 - Do not retry silently. Surface to user with the `action` field guidance.
 
 ## On success
